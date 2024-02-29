@@ -8,7 +8,7 @@ use ethers::{
     utils::format_units,
 };
 use std::{error::Error, str::FromStr, sync::Arc};
-use uniswap_watcher::{compute_gas_fee, POOL_ADDRESS, RPC_URL_HTTP, RPC_URL_WS};
+use uniswap_watcher::{compute_gas_fee_eth, POOL_ADDRESS, RPC_URL_HTTP, RPC_URL_WS};
 
 abigen!(
     AggregatorInterface,
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
 
             // println!("{tx:?}");
 
-            _ = compute_gas_fee(&tx).await;
+            _ = compute_gas_fee_eth(&tx).await;
             //Transaction { hash: 0xdcf71f94263712cd6471ed62f63b35c5f0b7da79c3cde2ed79ede08905046cef, nonce: 49, block_hash: Some(0xe5480c13daf5ece2059fd7ebb1a1c1f93e1e6c196d65af22e6f6870c2cf5b3a7), block_number: Some(19334841), transaction_index: Some(139), from: 0xdb1aeb6982734f29c8875cd09d835334e20839c1, to: Some(0xce16f69375520ab01377ce7b88f5ba8c48f8d666), value: 25000141853047277933, gas_price: Some(87798903854), gas: 420636, input: Bytes(0x846a1bc6...), v: 0, r: 9178740..., s: 573577789..., transaction_type: Some(2), access_list: Some(AccessList([])), max_priority_fee_per_gas: Some(44264641), max_fee_per_gas: Some(129859474761), chain_id: Some(1), other: OtherFields { inner: {"yParity": String("0x0")} } }
         }
     }

@@ -3,7 +3,7 @@ use ethers::{
     types::H256,
 };
 use std::str::FromStr;
-use uniswap_watcher::{compute_gas_fee, RPC_URL_HTTP};
+use uniswap_watcher::{compute_gas_fee_eth, RPC_URL_HTTP};
 
 #[tokio::test]
 async fn gas_fee_eth() {
@@ -17,6 +17,6 @@ async fn gas_fee_eth() {
         .unwrap()
         .unwrap();
 
-    let gas_fee = compute_gas_fee(&tx).await.unwrap();
+    let gas_fee = compute_gas_fee_eth(&tx).await.unwrap();
     assert_eq!(gas_fee, 0.018990909956827312);
 }
