@@ -3,7 +3,9 @@ use ethers::{
     providers::{Http, Middleware, Provider},
     types::H256,
 };
+use std::collections::HashMap;
 use std::str::FromStr;
+use uniswap_watcher::controller::Application;
 use uniswap_watcher::{compute_gas_fee_eth, RPC_URL_HTTP};
 
 const TEST_TX_HASH: &str = "0xe55abfa818e6237b794a41a99482ef7108ed7d6c89867ed9b443011c93d2fb77";
@@ -37,4 +39,20 @@ async fn gas_fee_eth() {
 
     let gas_fee = compute_gas_fee_eth(&tx).await.unwrap();
     assert_eq!(gas_fee, 0.0181623707852374);
+}
+
+#[tokio::test]
+async fn gas_fee_batch() {
+    let hash1 = "0x465a5e24ebe4ad90d1a235455f14a12b4aba4b956893d4bf11d0d986ee42c4a7".to_string();
+    let hash2 = "0x926484f31f9d99d24b0e984a98483f6459872fbcb7e0abd5f1ce704d70835cee".to_string();
+    let app = Application::new().unwrap();
+    let actual = app
+        .get_tx_fee_batch(vec![hash1.clone(), hash2.clone()])
+        .await
+        .unwrap();
+    let expected = HashMap::from([
+        (hash1, 0.018990909956827312f64),
+        (hash2, 0.1192466376638699f64),
+    ]);
+    assert_eq!(actual, expected);
 }
