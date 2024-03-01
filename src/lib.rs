@@ -16,6 +16,7 @@ pub const VERSION: &str = "0.0.1";
 pub const RPC_URL_HTTP: &str = "https://eth.drpc.org";
 pub const RPC_URL_WS: &str = "wss://ethereum-rpc.publicnode.com";
 pub const POOL_ADDRESS: &str = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640";
+pub const BINANCE_HOST: &str = "https://api.binance.com";
 
 abigen!(
     AggregatorInterface,
@@ -38,7 +39,7 @@ pub async fn compute_gas_fee_eth(tx: &TransactionReceipt) -> Result<f64, Error> 
 
 pub async fn subscribe_logs() -> Result<()> {
     // todo app attributes
-    let binance_client = BinanceClient::new("https://api.binance.com".into());
+    let binance_client = BinanceClient::new(BINANCE_HOST.into());
     let client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
     let ws_client = Provider::<Ws>::connect(RPC_URL_WS).await.unwrap();
     let ws_client = Arc::new(ws_client);
@@ -85,6 +86,7 @@ pub async fn subscribe_logs() -> Result<()> {
                 fee_eth,
                 fee_eth * eth_price
             )
+            // todo store in db
         }
     }
     Ok(())

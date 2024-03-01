@@ -27,8 +27,8 @@ pub struct BinanceClient {
 }
 
 impl BinanceClient {
-    pub fn new(host: String) -> Self {
-        Self { host }
+    pub fn new(host: &str) -> Self {
+        Self { host: host.into() }
     }
 
     pub async fn get_ticker(&self, symbol: &str) -> reqwest::Result<Ticker> {
