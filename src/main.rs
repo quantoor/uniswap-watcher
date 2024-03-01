@@ -1,21 +1,17 @@
-use actix_web::{web, App, HttpServer};
-use uniswap_watcher::controller::{home, tx_fee, Application};
-use uniswap_watcher::subscribe_logs;
+use env_logger::Env;
+use tracing::info;
+use uniswap_watcher::{run_server, subscribe_logs};
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    println!("Subscribing to logs...");
+async fn main() -> anyhow::Result<()> {
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+
+    info!("Subscribing to logs...");
     tokio::spawn(subscribe_logs());
 
-    println!("Serving...");
-    let state = Application::new().unwrap();
+    info!("Serving...");
     let address = format!("127.0.0.1:{}", 8080);
-    HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(state.clone()))
-            .service(web::scope("").service(home).service(tx_fee))
-    })
-    .bind(address)?
-    .run()
-    .await
+    run_server(address)?.await.expect("Error running server");
+
+    Ok(())
 }

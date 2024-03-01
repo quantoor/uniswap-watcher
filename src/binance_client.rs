@@ -7,6 +7,7 @@ pub struct Ticker {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct Kline {
     kline_open_time: u64,
     open_price: String,
