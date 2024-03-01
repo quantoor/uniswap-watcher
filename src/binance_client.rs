@@ -6,11 +6,11 @@ pub struct Ticker {
     pub price: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct Kline {
     kline_open_time: u64,
-    open_price: String,
+    pub open_price: String,
     high_price: String,
     low_price: String,
     close_price: String,
@@ -23,6 +23,7 @@ pub struct Kline {
     unused: String,
 }
 
+#[derive(Clone)]
 pub struct BinanceClient {
     host: String,
 }
