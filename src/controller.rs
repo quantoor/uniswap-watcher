@@ -1,9 +1,9 @@
-use std::str::FromStr;
 use crate::{compute_gas_fee_eth, RPC_URL_HTTP};
 use actix_web::http::header::ContentType;
 use actix_web::{get, web, HttpResponse, Responder};
 use ethers::middleware::Middleware;
 use ethers::prelude::{Http, Provider, H256};
+use std::str::FromStr;
 
 #[derive(Clone)]
 pub struct Application {
