@@ -8,3 +8,11 @@ async fn ticker() -> Result<()> {
     println!("{res:?}");
     Ok(())
 }
+
+#[tokio::test]
+async fn kline() -> Result<()> {
+    let client = BinanceClient::new("https://api.binance.com".into());
+    let res = client.get_kline("ETHUSDT", 1709314843000).await?;
+    println!("{res:?}");
+    Ok(())
+}

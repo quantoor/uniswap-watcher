@@ -10,9 +10,9 @@ use ethers::prelude::{Http, Provider, TransactionReceipt, ValueOrArray, Ws};
 use ethers::utils::format_units;
 use futures_util::StreamExt;
 use std::sync::Arc;
-use std::{thread, time};
-use tokio::task;
+use std::time;
 
+pub const VERSION: &str = "0.0.1";
 pub const RPC_URL_HTTP: &str = "https://eth.drpc.org";
 pub const RPC_URL_WS: &str = "wss://ethereum-rpc.publicnode.com";
 pub const POOL_ADDRESS: &str = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640";
@@ -49,15 +49,14 @@ pub async fn subscribe_logs() -> Result<()> {
     let mut stream = event.subscribe_with_meta().await?;
     loop {
         while let Some(Ok((log, meta))) = stream.next().await {
-            let log: SwapFilter = log;
+            // let log: SwapFilter = log;
             let meta: LogMeta = meta;
             // println!("{log:?}");
             // println!("{meta:?}");
             // SwapFilter { sender: 0x0b8a49d816cc709b6eadb09498030ae3416b66dc, recipient: 0x5777d92f208679db4b9778590fa3cab3ac9e2168, amount_0: -204560386743, amount_1: 59650147611384101454, sqrt_price_x96: 1352811659334603508045816700931506, liquidity: 10626721212312255156, tick: 194917 }
             // LogMeta { address: 0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640, block_number: 19334649, block_hash: 0x810a72a1a782e3d5c73ef8b4f3ba83bc0ebf15603e3c01bcc6b7156acc332279, transaction_hash: 0x8705731e8d54ca8de0daf4d7a09398e308a7c7fb06f8f26122b95fcb8d2d51c7, transaction_index: 102, log_index: 34 }
 
-            let ten_millis = time::Duration::from_millis(1000); // fixme
-            tokio::time::sleep(ten_millis).await;
+            tokio::time::sleep(time::Duration::from_millis(1000)).await; // fixme
 
             let tx = client
                 .get_transaction_receipt(meta.transaction_hash)

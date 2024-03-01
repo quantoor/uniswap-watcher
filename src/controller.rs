@@ -1,4 +1,4 @@
-use crate::{compute_gas_fee_eth, RPC_URL_HTTP};
+use crate::{compute_gas_fee_eth, RPC_URL_HTTP, VERSION};
 use actix_web::http::header::ContentType;
 use actix_web::{get, web, HttpResponse, Responder};
 use ethers::middleware::Middleware;
@@ -7,12 +7,14 @@ use std::str::FromStr;
 
 #[derive(Clone)]
 pub struct Application {
+    pub version: String,
     pub client: Provider<Http>,
 }
 
 impl Application {
     pub fn new() -> anyhow::Result<Application> {
         Ok(Self {
+            version: VERSION.into(),
             client: Provider::<Http>::try_from(RPC_URL_HTTP).unwrap(),
         })
     }
@@ -22,7 +24,7 @@ impl Application {
 async fn home(controller: web::Data<Application>) -> impl Responder {
     HttpResponse::Ok()
         .content_type(ContentType::plaintext())
-        .body("noice!")
+        .body(format!("v{}", controller.version))
 }
 
 #[get("/tx_fee")]
