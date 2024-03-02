@@ -1,14 +1,16 @@
 use crate::binance_client::BinanceClient;
-use crate::{compute_gas_fee_eth, BINANCE_HOST, RPC_URL_HTTP, VERSION};
+use crate::{compute_gas_fee_eth, TxFee, BINANCE_HOST, RPC_URL_HTTP, VERSION};
 use actix_web::http::header::ContentType;
 use actix_web::{get, web, HttpResponse, Responder};
 use anyhow::Result;
 use ethers::middleware::Middleware;
-use ethers::prelude::{Http, Provider, H256};
-use ethers::types::BlockId;
+use ethers::prelude::{Http, Provider};
+use ethers::types::{BlockId, TxHash};
+use ethers::utils::hex::ToHexExt;
 use serde_json::json;
 use std::collections::HashMap;
 use std::str::FromStr;
+use tracing::error;
 
 #[derive(Clone)]
 pub struct Application {
@@ -26,11 +28,10 @@ impl Application {
         })
     }
 
-    pub async fn get_tx_fee(&self, tx_hash: &str) -> Result<f64> {
+    pub async fn get_tx_fee(&self, tx_hash: &TxHash) -> Result<f64> {
         // todo remove all unwrap
         // todo check db
-        let tx_hash = H256::from_str(tx_hash)?;
-        let tx_receipt = self.client.get_transaction_receipt(tx_hash).await?;
+        let tx_receipt = self.client.get_transaction_receipt(*tx_hash).await?;
         if tx_receipt == None {
             panic!("tx hash not found") // fixme
         }
@@ -51,11 +52,19 @@ impl Application {
         Ok(fee * eth_usdt_price)
     }
 
-    pub async fn get_tx_fee_batch(&self, tx_hashes: Vec<String>) -> Result<HashMap<String, f64>> {
-        let mut res: HashMap<String, f64> = HashMap::new();
-        for tx_hash in tx_hashes {
-            let fee = self.get_tx_fee(tx_hash.as_str()).await;
-            res.insert(tx_hash, fee.unwrap());
+    pub async fn get_tx_fee_batch(&self, tx_hashes: Vec<String>) -> Result<HashMap<TxHash, f64>> {
+        let mut res: HashMap<TxHash, f64> = HashMap::new();
+        for tx_hash_str in tx_hashes {
+            let tx_hash = TxHash::from_str(tx_hash_str.as_str());
+            if tx_hash.is_err() {
+                error!("Invalid tx hash {}", tx_hash_str);
+                continue;
+            }
+            let tx_hash = tx_hash.unwrap();
+            let fee = self.get_tx_fee(&tx_hash).await;
+            if fee.is_ok() {
+                res.insert(tx_hash, fee.unwrap());
+            }
         }
         Ok(res)
     }

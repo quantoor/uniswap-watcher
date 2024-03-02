@@ -9,21 +9,21 @@ pub mod db;
 
 use crate::binance_client::BinanceClient;
 use crate::controller::{home, tx_fee, Application};
-use crate::db::DatabaseSettings;
+use crate::db::{insert_tx_fee, DatabaseSettings, TxFee};
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer, Responder};
 use anyhow::{anyhow, Error, Result};
 use ethers::contract::{abigen, Contract, LogMeta};
 use ethers::middleware::Middleware;
-use ethers::prelude::{Http, Provider, TransactionReceipt, ValueOrArray, Ws};
+use ethers::prelude::{Http, Provider, TransactionReceipt, ValueOrArray, Ws, H256};
 use ethers::utils::format_units;
+use ethers::utils::hex::ToHexExt;
 use futures_util::StreamExt;
 use sqlx;
 use sqlx::postgres::PgQueryResult;
-use sqlx::PgPool;
+use sqlx::{FromRow, PgPool, Row};
 use std::sync::Arc;
 use std::time;
-use ethers::utils::hex::ToHexExt;
 use tracing::{error, info};
 
 pub const VERSION: &str = "0.0.1";
@@ -52,18 +52,8 @@ pub async fn compute_gas_fee_eth(tx: &TransactionReceipt) -> Result<f64, Error> 
 }
 
 #[allow(unreachable_code)]
-pub async fn subscribe_logs() -> Result<()> {
+pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
     // todo app attributes
-    let settings = DatabaseSettings {
-        username: "postgres".into(),
-        password: "password".into(),
-        port: 5432,
-        host: "127.0.0.1".into(),
-        database_name: "fees".into(),
-    };
-    let db_connection = PgPool::connect(&settings.connection_string())
-        .await
-        .expect("Failed to connect to Postgres");
     let binance_client = BinanceClient::new(BINANCE_HOST.into());
     let client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
     let ws_client = Provider::<Ws>::connect(RPC_URL_WS).await.unwrap();
@@ -77,7 +67,7 @@ pub async fn subscribe_logs() -> Result<()> {
         while let Some(Ok((_log, meta))) = stream.next().await {
             let meta: LogMeta = meta;
 
-            tokio::time::sleep(time::Duration::from_millis(1000)).await; // fixme
+            tokio::time::sleep(time::Duration::from_millis(2000)).await; // fixme
 
             let tx = client
                 .get_transaction_receipt(meta.transaction_hash)
@@ -98,7 +88,7 @@ pub async fn subscribe_logs() -> Result<()> {
             let fee_usdt = fee_eth * eth_price;
 
             // todo queue
-            let data: TxFee = TxFee {
+            let data = TxFee {
                 tx_hash: tx.transaction_hash.encode_hex_with_prefix(),
                 fee_eth,
                 fee_usdt,
@@ -109,38 +99,15 @@ pub async fn subscribe_logs() -> Result<()> {
     Ok(())
 }
 
-pub fn run_server(address: String) -> Result<Server, std::io::Error> {
+pub fn run_server(address: String, db_connection: PgPool) -> Result<Server, std::io::Error> {
     let app = Application::new().unwrap();
     let server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(app.clone()))
             .service(web::scope("").service(home).service(tx_fee))
+            .app_data(db_connection.clone())
     })
     .bind(address)?
     .run();
     Ok(server)
-}
-
-#[derive(Debug)]
-pub struct TxFee {
-    pub tx_hash: String,
-    pub fee_eth: f64,
-    pub fee_usdt: f64,
-}
-
-pub async fn insert_tx_fee(data: &TxFee, pool: &PgPool) -> Result<()> {
-    info!("Inserting TxFee={:?}", data);
-    let res = sqlx::query(
-        r#"
-        INSERT INTO fees (tx_hash, fee_eth, fee_usdt)
-        VALUES ($1, $2, $3)
-        "#,
-    )
-    .bind(data.tx_hash.clone())
-    .bind(data.fee_eth)
-    .bind(data.fee_usdt)
-    .execute(pool)
-    .await?;
-    info!("rows affected: {}", res.rows_affected());
-    Ok(())
 }
