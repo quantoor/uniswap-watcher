@@ -1,5 +1,12 @@
+// todo remove
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 use env_logger::Env;
+use sqlx::PgPool;
 use tracing::info;
+use uniswap_watcher::db::DatabaseSettings;
 use uniswap_watcher::{run_server, subscribe_logs};
 
 #[tokio::main]

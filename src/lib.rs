@@ -1,8 +1,15 @@
+// todo remove
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 pub mod binance_client;
 pub mod controller;
+pub mod db;
 
 use crate::binance_client::BinanceClient;
 use crate::controller::{home, tx_fee, Application};
+use crate::db::DatabaseSettings;
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer, Responder};
 use anyhow::{anyhow, Error, Result};
@@ -11,8 +18,12 @@ use ethers::middleware::Middleware;
 use ethers::prelude::{Http, Provider, TransactionReceipt, ValueOrArray, Ws};
 use ethers::utils::format_units;
 use futures_util::StreamExt;
+use sqlx;
+use sqlx::postgres::PgQueryResult;
+use sqlx::PgPool;
 use std::sync::Arc;
 use std::time;
+use ethers::utils::hex::ToHexExt;
 use tracing::{error, info};
 
 pub const VERSION: &str = "0.0.1";
@@ -40,8 +51,19 @@ pub async fn compute_gas_fee_eth(tx: &TransactionReceipt) -> Result<f64, Error> 
     Ok(gas_eth_str.parse()?)
 }
 
+#[allow(unreachable_code)]
 pub async fn subscribe_logs() -> Result<()> {
     // todo app attributes
+    let settings = DatabaseSettings {
+        username: "postgres".into(),
+        password: "password".into(),
+        port: 5432,
+        host: "127.0.0.1".into(),
+        database_name: "fees".into(),
+    };
+    let db_connection = PgPool::connect(&settings.connection_string())
+        .await
+        .expect("Failed to connect to Postgres");
     let binance_client = BinanceClient::new(BINANCE_HOST.into());
     let client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
     let ws_client = Provider::<Ws>::connect(RPC_URL_WS).await.unwrap();
@@ -73,14 +95,15 @@ pub async fn subscribe_logs() -> Result<()> {
             let ticker = binance_client.get_ticker("ETHUSDT").await?;
             let eth_price = ticker.price;
             let eth_price: f64 = eth_price.parse()?;
+            let fee_usdt = fee_eth * eth_price;
 
-            info!(
-                "tx={:?} fee_eth={:?} fee_usdt={:?}",
-                tx.transaction_hash,
+            // todo queue
+            let data: TxFee = TxFee {
+                tx_hash: tx.transaction_hash.encode_hex_with_prefix(),
                 fee_eth,
-                fee_eth * eth_price
-            )
-            // todo store in db
+                fee_usdt,
+            };
+            insert_tx_fee(&data, &db_connection).await;
         }
     }
     Ok(())
@@ -96,4 +119,28 @@ pub fn run_server(address: String) -> Result<Server, std::io::Error> {
     .bind(address)?
     .run();
     Ok(server)
+}
+
+#[derive(Debug)]
+pub struct TxFee {
+    pub tx_hash: String,
+    pub fee_eth: f64,
+    pub fee_usdt: f64,
+}
+
+pub async fn insert_tx_fee(data: &TxFee, pool: &PgPool) -> Result<()> {
+    info!("Inserting TxFee={:?}", data);
+    let res = sqlx::query(
+        r#"
+        INSERT INTO fees (tx_hash, fee_eth, fee_usdt)
+        VALUES ($1, $2, $3)
+        "#,
+    )
+    .bind(data.tx_hash.clone())
+    .bind(data.fee_eth)
+    .bind(data.fee_usdt)
+    .execute(pool)
+    .await?;
+    info!("rows affected: {}", res.rows_affected());
+    Ok(())
 }
