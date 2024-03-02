@@ -1,4 +1,5 @@
 use crate::binance_client::BinanceClient;
+use crate::db::{get_tx_fee_from_db, insert_tx_fee, DatabaseSettings};
 use crate::{compute_gas_fee_eth, TxFee, BINANCE_HOST, RPC_URL_HTTP, VERSION};
 use actix_web::http::header::ContentType;
 use actix_web::{get, web, HttpResponse, Responder};
@@ -8,35 +9,86 @@ use ethers::prelude::{Http, Provider};
 use ethers::types::{BlockId, TxHash};
 use ethers::utils::hex::ToHexExt;
 use serde_json::json;
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
-use tracing::error;
+use tracing::{error, info};
 
 #[derive(Clone)]
 pub struct Application {
     pub version: String,
     pub client: Provider<Http>,
     pub binance_client: BinanceClient,
+    pub db_connection: PgPool,
 }
 
 impl Application {
-    pub fn new() -> Result<Application> {
+    pub fn new(db_connection: PgPool) -> Result<Application> {
         Ok(Self {
             version: VERSION.into(),
             client: Provider::<Http>::try_from(RPC_URL_HTTP).unwrap(),
             binance_client: BinanceClient::new(BINANCE_HOST),
+            db_connection,
         })
     }
 
-    pub async fn get_tx_fee(&self, tx_hash: &TxHash) -> Result<f64> {
+    pub async fn try_get_or_insert(&self, tx_hash: &TxHash) -> Result<TxFee> {
+        // Try get fee from db
+        info!(
+            "Try get from db tx_hash={}",
+            tx_hash.encode_hex_with_prefix()
+        );
+        let res = get_tx_fee_from_db(tx_hash, &self.db_connection).await;
+        if res.is_ok() {
+            return Ok(res.unwrap());
+        }
+
+        // If fee not found, get it from blockchain
+        let res = self.get_tx_fee(tx_hash).await;
+        if res.is_err() {
+            error!(
+                "Could not get fee for tx_hash={}",
+                tx_hash.encode_hex_with_prefix()
+            );
+            return res;
+        }
+        let res = res.unwrap();
+
+        // Store fee in db
+        if insert_tx_fee(&res.clone(), &self.db_connection)
+            .await
+            .is_err()
+        {
+            error!(
+                "Error inserting in db tx_hash={}",
+                tx_hash.encode_hex_with_prefix()
+            );
+        }
+
+        // Return result
+        Ok(res)
+    }
+
+    pub async fn get_tx_fee(&self, tx_hash: &TxHash) -> Result<TxFee> {
+        info!(
+            "Getting fee for tx_hash={}",
+            tx_hash.encode_hex_with_prefix()
+        );
+
         // todo remove all unwrap
         // todo check db
+
+        // Get transaction receipt for given transaction hash
         let tx_receipt = self.client.get_transaction_receipt(*tx_hash).await?;
         if tx_receipt == None {
             panic!("tx hash not found") // fixme
         }
         let tx = tx_receipt.unwrap();
-        let fee = compute_gas_fee_eth(&tx).await.unwrap();
+
+        // Use transaction receipt to compute the gas fee: gas_fee = gas_used * gas_price
+        let fee_eth = compute_gas_fee_eth(&tx).await.unwrap();
+
+        // Get from Binance the price of ETH/USDT at the time of the transaction (with 1 min precision)
         let block = self
             .client
             .get_block(BlockId::Hash(tx.block_hash.unwrap()))
@@ -49,7 +101,15 @@ impl Application {
             .await?;
         let eth_usdt_price = ticker[0].clone().open_price;
         let eth_usdt_price: f64 = eth_usdt_price.parse().unwrap();
-        Ok(fee * eth_usdt_price)
+
+        // Compute gas fee in USDT
+        let fee_usdt = fee_eth * eth_usdt_price;
+
+        Ok(TxFee {
+            tx_hash: tx.transaction_hash.encode_hex_with_prefix(),
+            fee_eth,
+            fee_usdt,
+        })
     }
 
     pub async fn get_tx_fee_batch(&self, tx_hashes: Vec<String>) -> Result<HashMap<TxHash, f64>> {
@@ -61,9 +121,9 @@ impl Application {
                 continue;
             }
             let tx_hash = tx_hash.unwrap();
-            let fee = self.get_tx_fee(&tx_hash).await;
-            if fee.is_ok() {
-                res.insert(tx_hash, fee.unwrap());
+            let tx_fee_res = self.try_get_or_insert(&tx_hash).await;
+            if tx_fee_res.is_ok() {
+                res.insert(tx_hash, tx_fee_res.unwrap().fee_usdt);
             }
         }
         Ok(res)

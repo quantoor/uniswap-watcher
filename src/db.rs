@@ -27,7 +27,7 @@ impl DatabaseSettings {
     }
 }
 
-#[derive(Debug, FromRow)]
+#[derive(Clone, Debug, FromRow)]
 pub struct TxFee {
     pub tx_hash: String,
     pub fee_eth: f64,
@@ -47,7 +47,6 @@ pub async fn insert_tx_fee(data: &TxFee, pool: &PgPool) -> anyhow::Result<()> {
     .bind(data.fee_usdt)
     .execute(pool)
     .await?;
-    info!("rows affected: {}", res.rows_affected());
     Ok(())
 }
 

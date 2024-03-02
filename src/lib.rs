@@ -100,7 +100,7 @@ pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
 }
 
 pub fn run_server(address: String, db_connection: PgPool) -> Result<Server, std::io::Error> {
-    let app = Application::new().unwrap();
+    let app = Application::new(db_connection.clone()).unwrap();
     let server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(app.clone()))
