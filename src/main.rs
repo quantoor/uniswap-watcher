@@ -4,6 +4,7 @@
 #![allow(unused_variables)]
 
 use env_logger::Env;
+use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use tracing::info;
 use uniswap_watcher::db::DatabaseSettings;
@@ -20,7 +21,9 @@ async fn main() -> anyhow::Result<()> {
         host: "127.0.0.1".into(),
         database_name: "fees".into(),
     };
-    let db_connection = PgPool::connect(&settings.connection_string())
+    let db_connection = PgPoolOptions::new()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .connect(&settings.connection_string())
         .await
         .expect("Failed to connect to Postgres");
 
@@ -28,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(subscribe_logs(db_connection.clone()));
 
     info!("Serving...");
-    let address = format!("127.0.0.1:{}", 8080);
+    let address = format!("0.0.0.0:{}", 8080);
     run_server(address, db_connection)?
         .await
         .expect("Error running server");
