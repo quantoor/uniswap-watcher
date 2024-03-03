@@ -7,6 +7,7 @@ use env_logger::Env;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use tracing::info;
+use tracing::log::error;
 use uniswap_watcher::db::DatabaseSettings;
 use uniswap_watcher::{run_server, subscribe_logs};
 
@@ -18,14 +19,13 @@ async fn main() -> anyhow::Result<()> {
         username: "postgres".into(),
         password: "password".into(),
         port: 5432,
-        host: "127.0.0.1".into(),
-        database_name: "fees".into(),
+        host: "0.0.0.0".into(),
+        database_name: "postgres_db".into(),
     };
     let db_connection = PgPoolOptions::new()
         .connect_timeout(std::time::Duration::from_secs(3))
-        .connect(&settings.connection_string())
-        .await
-        .expect("Failed to connect to Postgres");
+        .connect_lazy(&settings.connection_string())
+        .expect("Failed to create db connection");
 
     info!("Subscribing to logs...");
     tokio::spawn(subscribe_logs(db_connection.clone()));
