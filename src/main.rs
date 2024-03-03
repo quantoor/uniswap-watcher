@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
         username: "postgres".into(),
         password: "password".into(),
         port: 5432,
-        host: "0.0.0.0".into(),
+        host: "host.docker.internal".into(), // fixme
         database_name: "postgres_db".into(),
     };
     let db_connection = PgPoolOptions::new()
