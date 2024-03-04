@@ -50,7 +50,9 @@ curl http://127.0.0.1:8080
 ### Send requests
 Get tx fee:
 ```
-curl http://127.0.0.1:8080/tx_fee
+curl -X GET http://localhost:8080/tx_fee \
+-H "Content-Type: application/json" \
+-d '["0x465a5e24ebe4ad90d1a235455f14a12b4aba4b956893d4bf11d0d986ee42c4a7", "0x926484f31f9d99d24b0e984a98483f6459872fbcb7e0abd5f1ce704d70835cee"]'
 ```
 
 ### References

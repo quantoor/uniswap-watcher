@@ -100,10 +100,7 @@ impl Application {
         );
 
         // Get transaction receipt for given transaction hash
-        let tx_receipt = match self.eth_client.get_transaction_receipt(*tx_hash).await? {
-            Some(receipt) => receipt,
-            None => return Err(anyhow!("Tx receipt not found for tx hash {}", tx_hash.encode_hex_with_prefix()))
-        };
+        let tx_receipt = try_get_tx_receipt(*tx_hash, &self.eth_client).await?;
 
         // Use transaction receipt to compute the gas fee: gas_fee = gas_used * gas_price
         let fee_eth = compute_gas_fee_eth(&tx_receipt).await?;
@@ -180,18 +177,10 @@ pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
         while let Some(Ok((_log, meta))) = stream.next().await {
             let meta: LogMeta = meta;
 
-            tokio::time::sleep(time::Duration::from_millis(2000)).await; // fixme
-
-            let tx_receipt = match eth_client.get_transaction_receipt(meta.transaction_hash).await? {
-                Some(receipt) => receipt,
-                None => {
-                    error!("Receipt is none for tx_hash={:?}", meta.transaction_hash);
-                    continue;
-                }
-            };
+            let tx_receipt = try_get_tx_receipt(meta.transaction_hash, &eth_client).await?;
             let fee_eth = compute_gas_fee_eth(&tx_receipt).await?;
 
-            info!("Getting ticker");
+            info!("Getting ticker for ETHUSDT");
             let ticker = binance_client.get_ticker("ETHUSDT").await?;
             let eth_price = ticker.price.parse::<f64>()?;
             let fee_usdt = fee_eth * eth_price;
@@ -205,6 +194,38 @@ pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Get transaction receipt for given transaction hash
+pub async fn try_get_tx_receipt(
+    tx_hash: TxHash,
+    eth_client: &Provider<Http>,
+) -> Result<TransactionReceipt> {
+    // The tx receipt may not be found immediately after receiving the event log,
+    // so a retry logic is used to try fetch the receipt every second for 5 seconds
+    let mut count = 0;
+    loop {
+        match eth_client.get_transaction_receipt(tx_hash).await? {
+            Some(receipt) => {
+                return Ok(receipt);
+            }
+            None => {
+                count += 1;
+                if count >= 5 {
+                    // Reached max retries, and receipt not found
+                    return Err(anyhow!(
+                        "Tx receipt for tx hash {} not found after 5 retries",
+                        tx_hash.encode_hex_with_prefix()
+                    ));
+                }
+                info!(
+                    "Tx receipt for tx hash {} not found, wait 1 sec and retry",
+                    tx_hash.encode_hex_with_prefix()
+                );
+                tokio::time::sleep(time::Duration::from_millis(1000)).await;
+            }
+        }
+    }
 }
 
 pub fn run_server(address: String, db_connection: PgPool) -> Result<Server, std::io::Error> {
