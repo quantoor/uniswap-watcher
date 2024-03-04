@@ -27,7 +27,7 @@ impl DatabaseSettings {
     }
 }
 
-#[derive(Clone, Debug, FromRow)]
+#[derive(Clone, Debug, FromRow, PartialEq)]
 pub struct TxFee {
     pub tx_hash: String,
     pub fee_eth: f64,
@@ -35,7 +35,7 @@ pub struct TxFee {
 }
 
 pub async fn insert_tx_fee(data: &TxFee, pool: &PgPool) -> anyhow::Result<()> {
-    info!("Inserting TxFee={:?}", data);
+    info!("Inserting in db TxFee={:?}", data);
     let res = sqlx::query(
         r#"
         INSERT INTO fees (tx_hash, fee_eth, fee_usdt)
@@ -51,7 +51,10 @@ pub async fn insert_tx_fee(data: &TxFee, pool: &PgPool) -> anyhow::Result<()> {
 }
 
 pub async fn get_tx_fee_from_db(tx_hash: &TxHash, pool: &PgPool) -> anyhow::Result<TxFee> {
-    println!("{}", tx_hash.encode_hex_with_prefix());
+    info!(
+        "Getting from db tx_hash {}",
+        tx_hash.encode_hex_with_prefix()
+    );
     let res = sqlx::query_as::<_, TxFee>(
         r#"
         SELECT * FROM fees

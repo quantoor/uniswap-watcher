@@ -20,10 +20,15 @@ Download the repository and then cd into it:
 git clone git@github.com:quantoor/uniswap-watcher.git
 cd uniswap-watcher
 ```
+All following commands should be executed inside the root folder `/uniswap-watcher`
 
 ### Run the tests
 Make sure to have rust installed: https://doc.rust-lang.org/book/ch01-01-installation.html
 
+Make sure that local port 5432 is not being used, then start an instance of Postgres in Docker with:
+```
+./scripts/init_db.sh
+```
 To run the tests:
 ```
 cargo test
@@ -32,7 +37,8 @@ cargo test
 ### Run the application
 Make sure to have docker-compose installed: https://docs.docker.com/compose/install/
 
-To run the application:
+Make sure that local port 5432 is not being used (if you executed `init_db.sh` in the previous step,
+you might need to stop the Postgres service in Docker). To run the application:
 ```
 docker-compose up
 ```
