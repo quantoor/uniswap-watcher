@@ -1,13 +1,6 @@
-// todo remove
-#![allow(unused_imports)]
-#![allow(dead_code)]
-#![allow(unused_variables)]
-
 use env_logger::Env;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
 use tracing::info;
-use tracing::log::error;
 use uniswap_watcher::db::DatabaseSettings;
 use uniswap_watcher::{run_server, subscribe_logs};
 
@@ -19,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
         username: "postgres".into(),
         password: "password".into(),
         port: 5432,
-        host: "host.docker.internal".into(), // fixme
+        host: "host.docker.internal".into(),
         database_name: "postgres_db".into(),
     };
     let db_connection = PgPoolOptions::new()

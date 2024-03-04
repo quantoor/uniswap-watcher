@@ -95,8 +95,8 @@ async fn get_tx_fee_single() {
             .unwrap(),
         &db_connection,
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     let expected = TxFee {
         tx_hash: "0xf3a23cc9af86832d33e87d717a6490fb75f594220abc88485084516256bae331".to_string(),
         fee_eth: 0.11,

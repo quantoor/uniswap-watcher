@@ -1,3 +1,4 @@
+use anyhow::Result;
 use ethers::prelude::TxHash;
 use ethers::utils::hex::ToHexExt;
 use sqlx::{FromRow, PgPool};
@@ -19,12 +20,6 @@ impl DatabaseSettings {
             self.username, self.password, self.host, self.port, self.database_name
         )
     }
-    pub fn connection_string_without_db(&self) -> String {
-        format!(
-            "postgres://{}:{}@{}:{}",
-            self.username, self.password, self.host, self.port
-        )
-    }
 }
 
 #[derive(Clone, Debug, FromRow, PartialEq)]
@@ -34,9 +29,10 @@ pub struct TxFee {
     pub fee_usdt: f64,
 }
 
-pub async fn insert_tx_fee(data: &TxFee, pool: &PgPool) -> anyhow::Result<()> {
+/// Insert tx in db
+pub async fn insert_tx_fee(data: &TxFee, pool: &PgPool) -> Result<()> {
     info!("Inserting in db TxFee={:?}", data);
-    let res = sqlx::query(
+    _ = sqlx::query(
         r#"
         INSERT INTO fees (tx_hash, fee_eth, fee_usdt)
         VALUES ($1, $2, $3)
@@ -50,7 +46,8 @@ pub async fn insert_tx_fee(data: &TxFee, pool: &PgPool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn get_tx_fee_from_db(tx_hash: &TxHash, pool: &PgPool) -> anyhow::Result<TxFee> {
+/// Get tx fee from db
+pub async fn get_tx_fee_from_db(tx_hash: &TxHash, pool: &PgPool) -> Result<TxFee> {
     info!(
         "Getting from db tx_hash {}",
         tx_hash.encode_hex_with_prefix()

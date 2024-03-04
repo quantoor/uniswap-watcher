@@ -1,29 +1,21 @@
-// todo remove
-#![allow(unused_imports)]
-#![allow(dead_code)]
-#![allow(unused_variables)]
-
 pub mod binance_client;
 pub mod db;
 
 use crate::binance_client::BinanceClient;
-use crate::db::{get_tx_fee_from_db, insert_tx_fee, DatabaseSettings, TxFee};
+use crate::db::{get_tx_fee_from_db, insert_tx_fee, TxFee};
 use actix_web::dev::Server;
 use actix_web::http::header::ContentType;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::{anyhow, Error, Result};
 use ethers::contract::{abigen, Contract, LogMeta};
 use ethers::middleware::Middleware;
-use ethers::prelude::{
-    BlockId, Http, Provider, TransactionReceipt, TxHash, ValueOrArray, Ws, H256,
-};
+use ethers::prelude::{BlockId, Http, Provider, TransactionReceipt, TxHash, ValueOrArray, Ws};
 use ethers::utils::format_units;
 use ethers::utils::hex::ToHexExt;
 use futures_util::StreamExt;
 use serde_json::json;
 use sqlx;
-use sqlx::postgres::PgQueryResult;
-use sqlx::{FromRow, PgPool, Row};
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -46,7 +38,7 @@ abigen!(
 #[derive(Clone)]
 pub struct Application {
     pub version: String,
-    pub client: Provider<Http>,
+    pub eth_client: Provider<Http>,
     pub binance_client: BinanceClient,
     pub db_connection: PgPool,
 }
@@ -55,12 +47,14 @@ impl Application {
     pub fn new(db_connection: PgPool) -> Result<Application> {
         Ok(Self {
             version: VERSION.into(),
-            client: Provider::<Http>::try_from(RPC_URL_HTTP).unwrap(),
+            eth_client: Provider::<Http>::try_from(RPC_URL_HTTP).unwrap(),
             binance_client: BinanceClient::new(BINANCE_HOST),
             db_connection,
         })
     }
 
+    /// Given a tx hash, tries to get the tx fee from db.
+    /// If the tx hash is not found, computes the tx fee on-chain, and then stores the result in db.
     pub async fn try_get_or_insert(&self, tx_hash: &TxHash) -> Result<TxFee> {
         // Try get fee from db
         info!(
@@ -98,29 +92,26 @@ impl Application {
         Ok(res)
     }
 
+    /// Given a tx hash,
     pub async fn get_tx_fee(&self, tx_hash: &TxHash) -> Result<TxFee> {
         info!(
             "Getting fee for tx_hash={}",
             tx_hash.encode_hex_with_prefix()
         );
 
-        // todo remove all unwrap
-        // todo check db
-
         // Get transaction receipt for given transaction hash
-        let tx_receipt = self.client.get_transaction_receipt(*tx_hash).await?;
-        if tx_receipt == None {
-            panic!("tx hash not found") // fixme
-        }
-        let tx = tx_receipt.unwrap();
+        let tx_receipt = match self.eth_client.get_transaction_receipt(*tx_hash).await? {
+            Some(receipt) => receipt,
+            None => return Err(anyhow!("Tx receipt not found for tx hash {}", tx_hash.encode_hex_with_prefix()))
+        };
 
         // Use transaction receipt to compute the gas fee: gas_fee = gas_used * gas_price
-        let fee_eth = compute_gas_fee_eth(&tx).await.unwrap();
+        let fee_eth = compute_gas_fee_eth(&tx_receipt).await?;
 
         // Get from Binance the price of ETH/USDT at the time of the transaction (with 1 min precision)
         let block = self
-            .client
-            .get_block(BlockId::Hash(tx.block_hash.unwrap()))
+            .eth_client
+            .get_block(BlockId::Hash(tx_receipt.block_hash.unwrap()))
             .await?
             .unwrap();
         let timestamp_ms = block.timestamp.as_u64() * 1000;
@@ -135,12 +126,13 @@ impl Application {
         let fee_usdt = fee_eth * eth_usdt_price;
 
         Ok(TxFee {
-            tx_hash: tx.transaction_hash.encode_hex_with_prefix(),
+            tx_hash: tx_receipt.transaction_hash.encode_hex_with_prefix(),
             fee_eth,
             fee_usdt,
         })
     }
 
+    /// Given an array of tx hashes, returns a map of tx hashes to their corresponding tx fees in USDT.
     pub async fn get_tx_fee_batch(&self, tx_hashes: Vec<String>) -> Result<HashMap<TxHash, f64>> {
         let mut res: HashMap<TxHash, f64> = HashMap::new();
         for tx_hash_str in tx_hashes {
@@ -159,6 +151,7 @@ impl Application {
     }
 }
 
+/// Given a tx receipt, computes the gas fee in ETH
 pub async fn compute_gas_fee_eth(tx: &TransactionReceipt) -> Result<f64, Error> {
     let gas_price = tx
         .effective_gas_price
@@ -171,11 +164,11 @@ pub async fn compute_gas_fee_eth(tx: &TransactionReceipt) -> Result<f64, Error> 
     Ok(gas_eth_str.parse()?)
 }
 
+/// Listen to event logs and store in db the tx fees
 #[allow(unreachable_code)]
 pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
-    // todo app attributes
     let binance_client = BinanceClient::new(BINANCE_HOST.into());
-    let client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
+    let eth_client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
     let ws_client = Provider::<Ws>::connect(RPC_URL_WS).await.unwrap();
     let ws_client = Arc::new(ws_client);
 
@@ -189,27 +182,22 @@ pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
 
             tokio::time::sleep(time::Duration::from_millis(2000)).await; // fixme
 
-            let tx = client
-                .get_transaction_receipt(meta.transaction_hash)
-                .await
-                .unwrap(); // todo handle this
-            if tx == None {
-                // todo retry
-                error!("receipt is none for tx_hash={:?}", meta.transaction_hash);
-                continue;
-            }
-            let tx = tx.unwrap();
-            let fee_eth = compute_gas_fee_eth(&tx).await.unwrap();
+            let tx_receipt = match eth_client.get_transaction_receipt(meta.transaction_hash).await? {
+                Some(receipt) => receipt,
+                None => {
+                    error!("Receipt is none for tx_hash={:?}", meta.transaction_hash);
+                    continue;
+                }
+            };
+            let fee_eth = compute_gas_fee_eth(&tx_receipt).await?;
 
-            info!("getting ticker");
+            info!("Getting ticker");
             let ticker = binance_client.get_ticker("ETHUSDT").await?;
-            let eth_price = ticker.price;
-            let eth_price: f64 = eth_price.parse()?;
+            let eth_price = ticker.price.parse::<f64>()?;
             let fee_usdt = fee_eth * eth_price;
 
-            // todo queue
             let data = TxFee {
-                tx_hash: tx.transaction_hash.encode_hex_with_prefix(),
+                tx_hash: tx_receipt.transaction_hash.encode_hex_with_prefix(),
                 fee_eth,
                 fee_usdt,
             };
@@ -236,7 +224,7 @@ pub fn run_server(address: String, db_connection: PgPool) -> Result<Server, std:
 async fn home(controller: web::Data<Application>) -> impl Responder {
     HttpResponse::Ok()
         .content_type(ContentType::plaintext())
-        .body(format!("v{}", controller.version))
+        .body(format!("Uniswap Watcher v{}", controller.version))
 }
 
 #[get("/tx_fee")]
