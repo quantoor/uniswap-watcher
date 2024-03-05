@@ -5,9 +5,11 @@ This application provides the following functionalities:
 - It subscribes to swap events occurring on the WETH-USDC-500 pool on UniswapV3 on Ethereum mainnet.
 - For every new event, it fetches the corresponding transaction data to get the tx fee in USDT and stores it in a database.
 It also computes and logs the swap price from the log amounts.
-- It runs a web server that exposes endpoints to query the tx fee in USDT for given transaction hashes.
-  - If the tx hash exists in the database, the corresponding info is fetched from it and returned.
-  - Otherwise, the tx fee is computed, stored in db and then returned.
+- It runs a web server that exposes the following endpoints:
+  - `/tx_fee`: to query the tx fee in USDT for given transaction hashes. If the tx hash exists in the database, the corresponding
+  info is fetched from it and returned, otherwise, the tx fee is computed, stored in db and then returned.
+  - `/swap_price`: to get the swap price of a UniswapV3 swap given a tx hash. The application will filter the logs of the transaction
+  to match the correct swap topic and the pool address.
 - In order to store data in the database, a queue (channel) is shared between threads. Instead of blocking the thread by inserting the data
 directly - which is potentially a time-consuming operation - the data is inserted in a queue. A separate thread is responsible for
 consuming the data and inserting it in the database.

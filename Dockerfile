@@ -14,5 +14,6 @@ RUN apt-get update -y \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/uniswap-watcher uniswap-watcher
+COPY --from=builder /app/configuration.yaml configuration.yaml
 ENV APP_ENVIRONMENT production
 ENTRYPOINT ["./uniswap-watcher"]

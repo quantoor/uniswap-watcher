@@ -10,6 +10,8 @@ services:
       - "8080:8080"
     expose:
       - "8080"
+    environment:
+      - DOCKER=1
   db:
     image: postgres:latest
     restart: always
