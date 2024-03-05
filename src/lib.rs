@@ -2,7 +2,7 @@ pub mod binance_client;
 pub mod db;
 
 use crate::binance_client::BinanceClient;
-use crate::db::{get_tx_fee_from_db, insert_tx_fee, TxFee};
+use crate::db::{get_tx_fee_from_db, TxFee};
 use actix_web::dev::Server;
 use actix_web::http::header::ContentType;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
@@ -19,6 +19,7 @@ use sqlx;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time;
 use tracing::{error, info};
@@ -49,15 +50,17 @@ pub struct Application {
     pub version: String,
     pub eth_client: Provider<Http>,
     pub binance_client: BinanceClient,
+    pub sender: Sender<TxFee>,
     pub db_connection: PgPool,
 }
 
 impl Application {
-    pub fn new(db_connection: PgPool) -> Result<Application> {
+    pub fn new(sender: Sender<TxFee>, db_connection: PgPool) -> Result<Application> {
         Ok(Self {
             version: VERSION.into(),
             eth_client: Provider::<Http>::try_from(RPC_URL_HTTP).unwrap(),
             binance_client: BinanceClient::new(BINANCE_HOST),
+            sender,
             db_connection,
         })
     }
@@ -76,25 +79,21 @@ impl Application {
         }
 
         // If fee not found, get it from blockchain
-        let res = self.get_tx_fee(tx_hash).await;
-        if res.is_err() {
-            error!(
-                "Could not get fee for tx_hash={}",
-                tx_hash.encode_hex_with_prefix()
-            );
-            return res;
-        }
-        let res = res.unwrap();
+        let res = match self.get_tx_fee(tx_hash).await {
+            Ok(res) => res,
+            Err(err) => {
+                error!(
+                    "Could not get fee for tx_hash={}: {}",
+                    tx_hash.encode_hex_with_prefix(),
+                    err
+                );
+                return Err(err);
+            }
+        };
 
-        // Store fee in db
-        if insert_tx_fee(&res.clone(), &self.db_connection)
-            .await
-            .is_err()
-        {
-            error!(
-                "Error inserting in db tx_hash={}",
-                tx_hash.encode_hex_with_prefix()
-            );
+        // Send result to queue to be inserted in db
+        if self.sender.send(res.clone()).is_err() {
+            error!("Could not send to queue tx fee {:?}", res.clone());
         }
 
         // Return result
@@ -179,7 +178,7 @@ pub fn get_price(amount_usdc: I256, amount_weth: I256) -> Result<f64> {
 
 /// Listen to event logs and store in db the tx fees
 #[allow(unreachable_code)]
-pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
+pub async fn subscribe_logs(sender: Sender<TxFee>) -> Result<()> {
     let binance_client = BinanceClient::new(BINANCE_HOST.into());
     let eth_client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
     let ws_client = Provider::<Ws>::connect(RPC_URL_WS).await.unwrap();
@@ -190,6 +189,7 @@ pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
 
     let mut stream = event.subscribe_with_meta().await?;
     loop {
+        info!("Waiting for swap event...");
         while let Some(Ok((log, meta))) = stream.next().await {
             let log: SwapFilter = log;
             let meta: LogMeta = meta;
@@ -207,7 +207,10 @@ pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
                 fee_eth,
                 fee_usdt,
             };
-            _ = insert_tx_fee(&data, &db_connection).await;
+            info!("Sending new data to queue: {:?}", data.clone());
+            if sender.send(data.clone()).is_err() {
+                error!("Could not send to queue tx fee {:?}", data.clone());
+            }
 
             // Compute the swap price
             match get_price(log.amount_0, log.amount_1) {
@@ -259,8 +262,12 @@ pub async fn try_get_tx_receipt(
     }
 }
 
-pub fn run_server(address: String, db_connection: PgPool) -> Result<Server, std::io::Error> {
-    let app = Application::new(db_connection.clone()).unwrap();
+pub fn run_server(
+    address: String,
+    sender: Sender<TxFee>,
+    db_connection: PgPool,
+) -> Result<Server, std::io::Error> {
+    let app = Application::new(sender, db_connection.clone()).unwrap();
     let server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(app.clone()))

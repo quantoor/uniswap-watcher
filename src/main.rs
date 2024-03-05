@@ -1,7 +1,8 @@
 use env_logger::Env;
 use sqlx::postgres::PgPoolOptions;
+use std::sync::mpsc;
 use tracing::info;
-use uniswap_watcher::db::DatabaseSettings;
+use uniswap_watcher::db::{run_queue_receiver, DatabaseSettings};
 use uniswap_watcher::{run_server, subscribe_logs};
 
 #[tokio::main]
@@ -20,12 +21,16 @@ async fn main() -> anyhow::Result<()> {
         .connect_lazy(&settings.connection_string())
         .expect("Failed to create db connection");
 
-    info!("Subscribing to logs...");
-    tokio::spawn(subscribe_logs(db_connection.clone()));
+    info!("Spawning queue receiver");
+    let (sender, receiver) = mpsc::channel();
+    tokio::spawn(run_queue_receiver(receiver, db_connection.clone()));
+
+    info!("Subscribing to logs");
+    tokio::spawn(subscribe_logs(sender.clone()));
 
     info!("Serving...");
     let address = format!("0.0.0.0:{}", 8080);
-    run_server(address, db_connection)?
+    run_server(address, sender, db_connection)?
         .await
         .expect("Error running server");
 

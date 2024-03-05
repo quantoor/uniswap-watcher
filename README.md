@@ -8,6 +8,9 @@ It also computes and logs the swap price from the log amounts.
 - It runs a web server that exposes endpoints to query the tx fee in USDT for given transaction hashes.
   - If the tx hash exists in the database, the corresponding info is fetched from it and returned.
   - Otherwise, the tx fee is computed, stored in db and then returned.
+- In order to store data in the database, a queue (channel) is shared between threads. Instead of blocking the thread by inserting the data
+directly - which is potentially a time-consuming operation - the data is inserted in a queue. A separate thread is responsible for
+consuming the data and inserting it in the database.
 
 ### Setup
 Download the repository and then cd into it:
@@ -50,6 +53,13 @@ curl -X GET http://localhost:8080/tx_fee \
 -d '["0x465a5e24ebe4ad90d1a235455f14a12b4aba4b956893d4bf11d0d986ee42c4a7", "0x926484f31f9d99d24b0e984a98483f6459872fbcb7e0abd5f1ce704d70835cee"]'
 ```
 
+### System considerations
+- Availability: this is achieved with a careful error handling that always keeps the application in a known state.
+- Scalability: the functions have been designed to be as decoupled as possible and the code modular,
+in order to achieve a certain degree of abstraction which allows the application to be scalable. 
+- Reliability: a set of automated tests has been implemented to decrease the likelihood of bugs and make sure that
+the application behaves as expected.
+
 ### References
 - Zero to Production In Rust: An introduction to backend development in Rust
-by Luca Palmieri
+  by Luca Palmieri
