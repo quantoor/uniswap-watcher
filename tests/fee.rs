@@ -8,7 +8,8 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::mpsc;
 use uniswap_watcher::db::{get_tx_fee_from_db, DatabaseSettings, TxFee};
-use uniswap_watcher::{compute_gas_fee_eth, Application, RPC_URL_HTTP};
+use uniswap_watcher::util::compute_gas_fee_eth;
+use uniswap_watcher::{AppConfig, Application};
 
 pub async fn get_db_connection() -> PgPool {
     let settings = DatabaseSettings {
@@ -18,7 +19,7 @@ pub async fn get_db_connection() -> PgPool {
         host: "127.0.0.1".into(),
         database_name: "postgres_db".into(),
     };
-    let mut connection = PgConnection::connect(&settings.connection_string())
+    let mut connection = PgConnection::connect(&settings.connection_string(false))
         .await
         .expect("Failed to connect to Postgres");
     _ = connection
@@ -47,14 +48,14 @@ pub async fn get_db_connection() -> PgPool {
     .await;
     PgPoolOptions::new()
         .connect_timeout(std::time::Duration::from_secs(2))
-        .connect(&settings.connection_string())
+        .connect(&settings.connection_string(false))
         .await
         .expect("Failed to create db connection")
 }
 
 #[tokio::test]
 async fn gas_fee_eth() {
-    let client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
+    let client = Provider::<Http>::try_from("https://eth.drpc.org").unwrap();
     let tx_hash =
         H256::from_str("0xe55abfa818e6237b794a41a99482ef7108ed7d6c89867ed9b443011c93d2fb77")
             .unwrap();
@@ -92,9 +93,10 @@ async fn get_tx_fee_batch() {
     let hash2 = "0x465a5e24ebe4ad90d1a235455f14a12b4aba4b956893d4bf11d0d986ee42c4a7";
     let hash3 = "0x926484f31f9d99d24b0e984a98483f6459872fbcb7e0abd5f1ce704d70835cee";
 
+    let config = AppConfig::new().unwrap();
     let (sender, _) = mpsc::channel();
     let db_connection = get_db_connection().await;
-    let app = Application::new(sender, db_connection).unwrap();
+    let app = Application::new(config, sender, db_connection).unwrap();
     let actual = app
         .get_tx_fee_batch(vec![
             hash1.to_string(),

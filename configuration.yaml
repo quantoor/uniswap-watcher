@@ -1,0 +1,13 @@
+# configuration.yaml
+application_port: 8080
+rpc_url_http: "https://eth.drpc.org"
+rpc_url_ws: "wss://ethereum-rpc.publicnode.com"
+pool_address: "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
+swap_topic: "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"
+binance_host: "https://api.binance.com"
+database:
+  host: "127.0.0.1"
+  port: 5432
+  username: "postgres"
+  password: "password"
+  database_name: "postgres_db"

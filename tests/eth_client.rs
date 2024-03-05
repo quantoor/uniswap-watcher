@@ -6,7 +6,11 @@ use ethers::types::Address;
 use std::str::FromStr;
 use std::sync::Arc;
 use uniswap_watcher::util::tx_hash_to_price;
-use uniswap_watcher::{IERC20, POOL_ADDRESS, RPC_URL_HTTP, SWAP_TOPIC};
+use uniswap_watcher::IERC20;
+
+const POOL_ADDRESS: &str = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640";
+const RPC_URL_HTTP: &str = "https://eth.drpc.org";
+const SWAP_TOPIC: &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
 
 #[tokio::test]
 async fn get_tx_receipt() {
@@ -31,8 +35,8 @@ async fn get_tx_receipt() {
 async fn erc20() -> Result<()> {
     let provider = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
     let client = Arc::new(provider);
-    let address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>()?;
-    let weth = IERC20::new(address, client);
+    let weth_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".parse::<Address>()?;
+    let weth = IERC20::new(weth_address, client);
     let symbol = weth.symbol().call().await?;
     let decimals = weth.decimals().call().await?;
     assert_eq!(symbol, "WETH");
@@ -42,7 +46,7 @@ async fn erc20() -> Result<()> {
 
 #[tokio::test]
 async fn decode_price() -> Result<()> {
-    let eth_client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
+    let eth_client = Provider::<Http>::try_from("https://eth.drpc.org").unwrap();
     let swap_topic = H256::from_str(SWAP_TOPIC).unwrap();
     let pool_address = POOL_ADDRESS.parse::<Address>().unwrap();
     let tx_hash =

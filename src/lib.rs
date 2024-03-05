@@ -3,12 +3,14 @@ pub mod db;
 pub mod util;
 
 use crate::binance_client::BinanceClient;
-use crate::db::{get_tx_fee_from_db, TxFee};
+use crate::db::{get_tx_fee_from_db, DatabaseSettings, TxFee};
 use crate::util::{compute_gas_fee_eth, try_get_tx_receipt, tx_hash_to_price};
 use actix_web::dev::Server;
 use actix_web::http::header::ContentType;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::Result;
+use config;
+use config::{Config, File, FileFormat};
 use ethers::addressbook::Address;
 use ethers::contract::{abigen, Contract, LogMeta};
 use ethers::middleware::Middleware;
@@ -25,13 +27,6 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use tracing::{error, info};
 
-pub const VERSION: &str = "0.0.1";
-pub const RPC_URL_HTTP: &str = "https://eth.drpc.org";
-pub const RPC_URL_WS: &str = "wss://ethereum-rpc.publicnode.com";
-pub const POOL_ADDRESS: &str = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640";
-pub const BINANCE_HOST: &str = "https://api.binance.com";
-pub const SWAP_TOPIC: &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
-
 abigen!(
     AggregatorInterface,
     r#"[
@@ -47,9 +42,29 @@ abigen!(
     ]"#,
 );
 
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct AppConfig {
+    pub application_port: u16,
+    pub rpc_url_http: String,
+    pub rpc_url_ws: String,
+    pub pool_address: String,
+    pub swap_topic: String,
+    pub binance_host: String,
+    pub database: DatabaseSettings,
+}
+
+impl AppConfig {
+    pub fn new() -> Result<AppConfig, config::ConfigError> {
+        let config = Config::builder()
+            .add_source(File::new("configuration", FileFormat::Yaml))
+            .build()?;
+        config.try_deserialize::<AppConfig>()
+    }
+}
+
 #[derive(Clone)]
 pub struct Application {
-    pub version: String,
+    pub config: AppConfig,
     pub eth_client: Provider<Http>,
     pub binance_client: BinanceClient,
     pub sender: Sender<TxFee>,
@@ -57,11 +72,15 @@ pub struct Application {
 }
 
 impl Application {
-    pub fn new(sender: Sender<TxFee>, db_connection: PgPool) -> Result<Application> {
+    pub fn new(
+        config: AppConfig,
+        sender: Sender<TxFee>,
+        db_connection: PgPool,
+    ) -> Result<Application> {
         Ok(Self {
-            version: VERSION.into(),
-            eth_client: Provider::<Http>::try_from(RPC_URL_HTTP).unwrap(),
-            binance_client: BinanceClient::new(BINANCE_HOST),
+            config: config.clone(),
+            eth_client: Provider::<Http>::try_from(config.rpc_url_http.as_str()).unwrap(),
+            binance_client: BinanceClient::new(config.binance_host.as_str()),
             sender,
             db_connection,
         })
@@ -160,14 +179,14 @@ impl Application {
 
 /// Listen to event logs and store in db the tx fees
 #[allow(unreachable_code)]
-pub async fn subscribe_logs(sender: Sender<TxFee>) -> Result<()> {
-    let binance_client = BinanceClient::new(BINANCE_HOST.into());
-    let eth_client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
-    let ws_client = Provider::<Ws>::connect(RPC_URL_WS).await.unwrap();
+pub async fn subscribe_logs(config: AppConfig, sender: Sender<TxFee>) -> Result<()> {
+    let binance_client = BinanceClient::new(config.binance_host.as_str());
+    let eth_client = Provider::<Http>::try_from(config.rpc_url_http.as_str()).unwrap();
+    let ws_client = Provider::<Ws>::connect(config.rpc_url_ws.as_str()).await?;
     let ws_client = Arc::new(ws_client);
 
     let event = Contract::event_of_type::<SwapFilter>(ws_client)
-        .address(ValueOrArray::Array(vec![POOL_ADDRESS.parse()?]));
+        .address(ValueOrArray::Array(vec![config.pool_address.parse()?]));
 
     let mut stream = event.subscribe_with_meta().await?;
     loop {
@@ -197,11 +216,12 @@ pub async fn subscribe_logs(sender: Sender<TxFee>) -> Result<()> {
 }
 
 pub fn run_server(
+    app_config: AppConfig,
     address: String,
     sender: Sender<TxFee>,
     db_connection: PgPool,
 ) -> Result<Server, std::io::Error> {
-    let app = Application::new(sender, db_connection.clone()).unwrap();
+    let app = Application::new(app_config, sender, db_connection.clone()).unwrap();
     let server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(app.clone()))
@@ -219,10 +239,10 @@ pub fn run_server(
 }
 
 #[get("/")]
-async fn home(controller: web::Data<Application>) -> impl Responder {
+async fn home() -> impl Responder {
     HttpResponse::Ok()
         .content_type(ContentType::plaintext())
-        .body(format!("Uniswap Watcher v{}", controller.version))
+        .body("Uniswap Watcher")
 }
 
 #[get("/tx_fee")]
@@ -264,8 +284,8 @@ async fn swap_price(
     controller: web::Data<Application>,
     arg: web::Query<SwapPriceArg>,
 ) -> impl Responder {
-    let swap_topic = H256::from_str(SWAP_TOPIC).unwrap();
-    let pool_address = POOL_ADDRESS.parse::<Address>().unwrap();
+    let swap_topic = H256::from_str(controller.config.swap_topic.as_str()).unwrap();
+    let pool_address = controller.config.pool_address.parse::<Address>().unwrap();
     let tx_hash = TxHash::from_str(arg.tx_hash.as_str());
     if tx_hash.is_err() {
         return HttpResponse::BadRequest()

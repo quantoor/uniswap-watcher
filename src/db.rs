@@ -6,7 +6,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 use tracing::{error, info};
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub struct DatabaseSettings {
     pub username: String,
     pub password: String,
@@ -16,10 +16,15 @@ pub struct DatabaseSettings {
 }
 
 impl DatabaseSettings {
-    pub fn connection_string(&self) -> String {
+    pub fn connection_string(&self, docker: bool) -> String {
+        let host = if docker {
+            "host.docker.internal"
+        } else {
+            self.host.as_str()
+        };
         format!(
             "postgres://{}:{}@{}:{}/{}",
-            self.username, self.password, self.host, self.port, self.database_name
+            self.username, self.password, host, self.port, self.database_name
         )
     }
 }

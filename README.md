@@ -59,8 +59,9 @@ curl "http://localhost:8080/swap_price?tx_hash=0xe55abfa818e6237b794a41a99482ef7
 
 ### System considerations
 - Availability: this is achieved with a careful error handling that always keeps the application in a known state.
-- Scalability: the functions have been designed to be as decoupled as possible and the code modular,
-in order to achieve a certain degree of abstraction which allows the application to be scalable. 
+- Scalability: the amount of hardcoded values has been minimized to very specific cases, and the functions have been
+designed to be as decoupled as possible and the code modular, in order to achieve a certain degree of abstraction which 
+allows the application to be scalable. 
 - Reliability: a set of automated tests has been implemented to decrease the likelihood of bugs and make sure that
 the application behaves as expected.
 
