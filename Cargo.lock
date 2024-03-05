@@ -4174,6 +4174,8 @@ dependencies = [
  "env_logger",
  "ethers",
  "futures-util",
+ "num-bigint",
+ "num-traits",
  "reqwest",
  "serde",
  "serde_json",

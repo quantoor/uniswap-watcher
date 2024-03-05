@@ -1,19 +1,21 @@
 pub mod binance_client;
 pub mod db;
+pub mod util;
 
 use crate::binance_client::BinanceClient;
 use crate::db::{get_tx_fee_from_db, TxFee};
+use crate::util::{compute_gas_fee_eth, try_get_tx_receipt, tx_hash_to_price};
 use actix_web::dev::Server;
 use actix_web::http::header::ContentType;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use anyhow::{anyhow, Error, Result};
+use anyhow::Result;
+use ethers::addressbook::Address;
 use ethers::contract::{abigen, Contract, LogMeta};
 use ethers::middleware::Middleware;
-use ethers::prelude::{BlockId, Http, Provider, TransactionReceipt, TxHash, ValueOrArray, Ws};
-use ethers::types::I256;
-use ethers::utils::format_units;
+use ethers::prelude::{BlockId, Http, Provider, TxHash, ValueOrArray, Ws, H256};
 use ethers::utils::hex::ToHexExt;
 use futures_util::StreamExt;
+use serde::Deserialize;
 use serde_json::json;
 use sqlx;
 use sqlx::PgPool;
@@ -21,7 +23,6 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use std::time;
 use tracing::{error, info};
 
 pub const VERSION: &str = "0.0.1";
@@ -29,6 +30,7 @@ pub const RPC_URL_HTTP: &str = "https://eth.drpc.org";
 pub const RPC_URL_WS: &str = "wss://ethereum-rpc.publicnode.com";
 pub const POOL_ADDRESS: &str = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640";
 pub const BINANCE_HOST: &str = "https://api.binance.com";
+pub const SWAP_TOPIC: &str = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
 
 abigen!(
     AggregatorInterface,
@@ -156,26 +158,6 @@ impl Application {
     }
 }
 
-/// Given a tx receipt, computes the gas fee in ETH
-pub async fn compute_gas_fee_eth(tx: &TransactionReceipt) -> Result<f64, Error> {
-    let gas_price = tx
-        .effective_gas_price
-        .ok_or(anyhow!("effective gas price not found in tx receipt"))?;
-    let gas = tx
-        .gas_used
-        .ok_or(anyhow!("gas used not found in tx receipt"))?;
-    let gas_eth = gas_price * gas;
-    let gas_eth_str = format_units(gas_eth, "ether")?;
-    Ok(gas_eth_str.parse()?)
-}
-
-/// Take in input the blockchain amounts of USDC and WETH, and return the price WETH/USDC
-pub fn get_price(amount_usdc: I256, amount_weth: I256) -> Result<f64> {
-    let amount_usdc = format_units(amount_usdc, 6)?.parse::<f64>()?;
-    let amount_weth = format_units(amount_weth, 18)?.parse::<f64>()?;
-    Ok((amount_usdc / amount_weth).abs())
-}
-
 /// Listen to event logs and store in db the tx fees
 #[allow(unreachable_code)]
 pub async fn subscribe_logs(sender: Sender<TxFee>) -> Result<()> {
@@ -190,10 +172,8 @@ pub async fn subscribe_logs(sender: Sender<TxFee>) -> Result<()> {
     let mut stream = event.subscribe_with_meta().await?;
     loop {
         info!("Waiting for swap event...");
-        while let Some(Ok((log, meta))) = stream.next().await {
-            let log: SwapFilter = log;
+        while let Some(Ok((_log, meta))) = stream.next().await {
             let meta: LogMeta = meta;
-
             let tx_receipt = try_get_tx_receipt(meta.transaction_hash, &eth_client).await?;
             let fee_eth = compute_gas_fee_eth(&tx_receipt).await?;
 
@@ -211,55 +191,9 @@ pub async fn subscribe_logs(sender: Sender<TxFee>) -> Result<()> {
             if sender.send(data.clone()).is_err() {
                 error!("Could not send to queue tx fee {:?}", data.clone());
             }
-
-            // Compute the swap price
-            match get_price(log.amount_0, log.amount_1) {
-                Ok(price) => {
-                    info!("Swap occurred at price {} ETH/USDC", price);
-                }
-                Err(err) => {
-                    error!(
-                        "Could not compute the price for tx hash {}: {}",
-                        tx_receipt.transaction_hash.encode_hex_with_prefix(),
-                        err
-                    );
-                }
-            }
         }
     }
     Ok(())
-}
-
-/// Get transaction receipt for given transaction hash
-pub async fn try_get_tx_receipt(
-    tx_hash: TxHash,
-    eth_client: &Provider<Http>,
-) -> Result<TransactionReceipt> {
-    // The tx receipt may not be found immediately after receiving the event log,
-    // so a retry logic is used to try fetch the receipt every second for 5 seconds
-    let mut count = 0;
-    loop {
-        match eth_client.get_transaction_receipt(tx_hash).await? {
-            Some(receipt) => {
-                return Ok(receipt);
-            }
-            None => {
-                count += 1;
-                if count >= 5 {
-                    // Reached max retries, and receipt not found
-                    return Err(anyhow!(
-                        "Tx receipt for tx hash {} not found after 5 retries",
-                        tx_hash.encode_hex_with_prefix()
-                    ));
-                }
-                info!(
-                    "Tx receipt for tx hash {} not found, wait 1 sec and retry",
-                    tx_hash.encode_hex_with_prefix()
-                );
-                tokio::time::sleep(time::Duration::from_millis(1000)).await;
-            }
-        }
-    }
 }
 
 pub fn run_server(
@@ -271,7 +205,12 @@ pub fn run_server(
     let server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(app.clone()))
-            .service(web::scope("").service(home).service(tx_fee))
+            .service(
+                web::scope("")
+                    .service(home)
+                    .service(tx_fee)
+                    .service(swap_price),
+            )
             .app_data(db_connection.clone())
     })
     .bind(address)?
@@ -309,6 +248,39 @@ async fn tx_fee(controller: web::Data<Application>, body: web::Bytes) -> impl Re
             let res = json!(fee);
             HttpResponse::Ok().json(res)
         }
+        Err(err) => HttpResponse::InternalServerError()
+            .content_type(ContentType::plaintext())
+            .body(format!("Something went wrong: {}", err)),
+    }
+}
+
+#[derive(Deserialize)]
+struct SwapPriceArg {
+    tx_hash: String,
+}
+
+#[get("/swap_price")]
+async fn swap_price(
+    controller: web::Data<Application>,
+    arg: web::Query<SwapPriceArg>,
+) -> impl Responder {
+    let swap_topic = H256::from_str(SWAP_TOPIC).unwrap();
+    let pool_address = POOL_ADDRESS.parse::<Address>().unwrap();
+    let tx_hash = TxHash::from_str(arg.tx_hash.as_str());
+    if tx_hash.is_err() {
+        return HttpResponse::BadRequest()
+            .content_type(ContentType::plaintext())
+            .body(format!("Invalid tx hash {}", arg.tx_hash));
+    }
+    match tx_hash_to_price(
+        swap_topic,
+        pool_address,
+        tx_hash.unwrap(),
+        &controller.eth_client,
+    )
+    .await
+    {
+        Ok(fee) => HttpResponse::Ok().body(format!("{}", fee)),
         Err(err) => HttpResponse::InternalServerError()
             .content_type(ContentType::plaintext())
             .body(format!("Something went wrong: {}", err)),

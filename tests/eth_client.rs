@@ -2,11 +2,11 @@ use anyhow::Result;
 use ethers::middleware::Middleware;
 use ethers::prelude::{H256, U256};
 use ethers::providers::{Http, Provider};
-use ethers::types::{Address, I256};
-use ethers::utils::format_units;
+use ethers::types::Address;
 use std::str::FromStr;
 use std::sync::Arc;
-use uniswap_watcher::{IERC20, RPC_URL_HTTP};
+use uniswap_watcher::util::tx_hash_to_price;
+use uniswap_watcher::{IERC20, POOL_ADDRESS, RPC_URL_HTTP, SWAP_TOPIC};
 
 #[tokio::test]
 async fn get_tx_receipt() {
@@ -41,14 +41,14 @@ async fn erc20() -> Result<()> {
 }
 
 #[tokio::test]
-async fn price() -> Result<()> {
-    let amount0 = -I256::from(3500000000usize);
-    let amount1 = I256::from(1100000000000000000usize);
-
-    let amount0 = format_units(amount0, 6)?.parse::<f64>()?;
-    let amount1 = format_units(amount1, 18)?.parse::<f64>()?;
-    let price = (amount0 / amount1).abs();
-    println!("{price:?}");
-
+async fn decode_price() -> Result<()> {
+    let eth_client = Provider::<Http>::try_from(RPC_URL_HTTP).unwrap();
+    let swap_topic = H256::from_str(SWAP_TOPIC).unwrap();
+    let pool_address = POOL_ADDRESS.parse::<Address>().unwrap();
+    let tx_hash =
+        H256::from_str("0xe55abfa818e6237b794a41a99482ef7108ed7d6c89867ed9b443011c93d2fb77")
+            .unwrap();
+    let price = tx_hash_to_price(swap_topic, pool_address, tx_hash, &eth_client).await?;
+    assert_eq!(price, 3405.792833770436);
     Ok(())
 }

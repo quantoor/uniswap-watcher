@@ -6,6 +6,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::{Connection, Executor, PgConnection, PgPool};
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::mpsc;
 use uniswap_watcher::db::{get_tx_fee_from_db, DatabaseSettings, TxFee};
 use uniswap_watcher::{compute_gas_fee_eth, Application, RPC_URL_HTTP};
 
@@ -91,8 +92,9 @@ async fn get_tx_fee_batch() {
     let hash2 = "0x465a5e24ebe4ad90d1a235455f14a12b4aba4b956893d4bf11d0d986ee42c4a7";
     let hash3 = "0x926484f31f9d99d24b0e984a98483f6459872fbcb7e0abd5f1ce704d70835cee";
 
+    let (sender, _) = mpsc::channel();
     let db_connection = get_db_connection().await;
-    let app = Application::new(db_connection).unwrap();
+    let app = Application::new(sender, db_connection).unwrap();
     let actual = app
         .get_tx_fee_batch(vec![
             hash1.to_string(),
