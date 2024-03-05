@@ -10,6 +10,7 @@ use anyhow::{anyhow, Error, Result};
 use ethers::contract::{abigen, Contract, LogMeta};
 use ethers::middleware::Middleware;
 use ethers::prelude::{BlockId, Http, Provider, TransactionReceipt, TxHash, ValueOrArray, Ws};
+use ethers::types::I256;
 use ethers::utils::format_units;
 use ethers::utils::hex::ToHexExt;
 use futures_util::StreamExt;
@@ -32,6 +33,14 @@ abigen!(
     AggregatorInterface,
     r#"[
         event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)
+    ]"#,
+);
+
+abigen!(
+    IERC20,
+    r#"[
+        function decimals() external view returnns (uint8)
+        function symbol() external view returns (string)
     ]"#,
 );
 
@@ -161,6 +170,13 @@ pub async fn compute_gas_fee_eth(tx: &TransactionReceipt) -> Result<f64, Error> 
     Ok(gas_eth_str.parse()?)
 }
 
+/// Take in input the blockchain amounts of USDC and WETH, and return the price WETH/USDC
+pub fn get_price(amount_usdc: I256, amount_weth: I256) -> Result<f64> {
+    let amount_usdc = format_units(amount_usdc, 6)?.parse::<f64>()?;
+    let amount_weth = format_units(amount_weth, 18)?.parse::<f64>()?;
+    Ok((amount_usdc / amount_weth).abs())
+}
+
 /// Listen to event logs and store in db the tx fees
 #[allow(unreachable_code)]
 pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
@@ -174,7 +190,8 @@ pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
 
     let mut stream = event.subscribe_with_meta().await?;
     loop {
-        while let Some(Ok((_log, meta))) = stream.next().await {
+        while let Some(Ok((log, meta))) = stream.next().await {
+            let log: SwapFilter = log;
             let meta: LogMeta = meta;
 
             let tx_receipt = try_get_tx_receipt(meta.transaction_hash, &eth_client).await?;
@@ -191,6 +208,20 @@ pub async fn subscribe_logs(db_connection: PgPool) -> Result<()> {
                 fee_usdt,
             };
             _ = insert_tx_fee(&data, &db_connection).await;
+
+            // Compute the swap price
+            match get_price(log.amount_0, log.amount_1) {
+                Ok(price) => {
+                    info!("Swap occurred at price {} ETH/USDC", price);
+                }
+                Err(err) => {
+                    error!(
+                        "Could not compute the price for tx hash {}: {}",
+                        tx_receipt.transaction_hash.encode_hex_with_prefix(),
+                        err
+                    );
+                }
+            }
         }
     }
     Ok(())
